@@ -1,0 +1,11 @@
+bower_components
+node_modules
+*.log
+.DS_Store
+public/models/
+tmp/
+public/*.jpg
+public/*.jpeg
+public/*.png
+dist/
+.vite/
