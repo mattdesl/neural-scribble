@@ -9,3 +9,4 @@ public/*.jpeg
 public/*.png
 dist/
 .vite/
+.claude/

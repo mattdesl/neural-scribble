@@ -56,7 +56,7 @@ else:
     device = "cpu"
     print("MPS not available; using CPU")
 
-img_size = 24  # in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put red-channel images are img_size×img_size
+img_size = 32  # in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put red-channel images are img_size×img_size
 ACCEPT_RGBA_COLOR = True  # <<— set to True if client will send RGBA
 IS_HALF = False
 
@@ -160,14 +160,9 @@ drawing_style = ""
 prompt_templates = [
     # "{obj}",
     
-    "a blurry photo of a {obj}",
-    "a blurry representation of a {obj}",
-    "a blurry image of a {obj}",
-    "out of focus photo of a {obj}",
-    
-    # "a drawing of {obj}",
-    # "a sketch of {obj}",
-    # "a painting of {obj}",
+    "a drawing of {obj}",
+    "a sketch of {obj}",
+    "a painting of {obj}",
     
     # "a drawing of {obj} on a white background",
     # "a painting of {obj} on a white background",
