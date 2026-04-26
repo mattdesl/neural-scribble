@@ -13,16 +13,16 @@ import * as Color from "@texel/color";
 import * as Random from "canvas-sketch-util/random.js";
 import sNES from "./snes.js";
 import { createBlitter, createConnection } from "./connection.js";
+import { SirenNetwork } from "./siren.js";
 import { vec3 } from "gl-matrix";
 import mixbox from "mixbox";
-import { SirenNetwork } from "./siren.js";
 
 //614850
 let seed = "" || Random.getRandomSeed();
 Random.setSeed(seed);
 console.log("Seed:", Random.getSeed());
 
-const vocab = Random.pick(["a canadian lake"]);
+const vocab = Random.pick(["a blue jay"]);
 console.log(vocab);
 
 // Sketch settings
@@ -48,14 +48,8 @@ const sketch = async (props) => {
   const TARGET_SIZE = 24;
   const TOTAL_EPOCHS = 500;
   const POPULATION_COUNT = 20;
-  const globalSigma = 1;
-  const nodeCount = 4;
-
-  const HIDDEN_LAYER_SIZE = 16;
-  const HIDDEN_LAYER_COUNT = 2;
-  const NET_LEARNING_RATE = 0.005 * 1;
-  const NET_SCALE = 30;
-  const GAUSSIAN_INPUT_DIMENSION = 2;
+  const globalSigma = 0.2;
+  const nodeCount = 5;
 
   let epochs = 0;
 
@@ -74,22 +68,6 @@ const sketch = async (props) => {
   const tmpCanvas = document.createElement("canvas");
   const tmpContext = tmpCanvas.getContext("2d", { willReadFrequently: true });
 
-  const outputCount = 3;
-  const inputCount = GAUSSIAN_INPUT_DIMENSION + 2;
-
-  const createNet = () => {
-    return SirenNetwork({
-      inputs: inputCount,
-      outputs: outputCount,
-      scale: NET_SCALE,
-      hiddenLayers: Array(HIDDEN_LAYER_COUNT).fill(HIDDEN_LAYER_SIZE),
-    });
-  };
-
-  const tmpNet = createNet();
-  const netLength = tmpNet.toFlat().length;
-  const tempFloat3 = new Float32Array(netLength);
-
   const defaultPositions = Array(nodeCount)
     .fill()
     .map(() => {
@@ -97,7 +75,7 @@ const sketch = async (props) => {
         position: [Random.gaussian(), Random.gaussian()],
       };
     });
-  const colorSigma = 0.1;
+  const colorSigma = 1;
   const nodeParams = [
     {
       type: "oklab",
@@ -108,22 +86,14 @@ const sketch = async (props) => {
     {
       type: "position",
       dimensions: 2,
-      sigma: 0.25,
+      sigma: 1,
       initScale: 1,
     },
     // { type: "temperature", dimensions: 1, sigma: 1, initScale: 0 },
-    // {
-    //   type: "net",
-    //   dimensions: netLength,
-    //   sigma: NET_LEARNING_RATE,
-    //   initData: () => createNet().toFlat(),
-    // },
   ].filter(Boolean);
 
-  const netInitData = createNet().toFlat();
-
   const paramsPerNode = nodeParams.reduce((sum, a) => sum + a.dimensions, 0);
-  const solutionLength = nodeCount * paramsPerNode + netLength;
+  const solutionLength = nodeCount * paramsPerNode;
 
   const optimizer = sNES({
     alpha: 1,
@@ -133,14 +103,7 @@ const sketch = async (props) => {
     random: Random.value,
   });
 
-  const gaussianInputs = Array(GAUSSIAN_INPUT_DIMENSION)
-    .fill()
-    .map(() => Random.gaussian());
-  const tmpInput = new Float32Array(inputCount);
-  const tmpOutput = new Float32Array(outputCount);
-
   const initialData = {
-    net: netInitData,
     nodes: Array(nodeCount)
       .fill()
       .map((_, nodeIndex) => {
@@ -174,9 +137,6 @@ const sketch = async (props) => {
         sigmaArray[idx++] = s * globalSigma;
       }
     }
-  }
-  for (let i = 0; i < netLength; i++) {
-    sigmaArray[idx++] = NET_LEARNING_RATE * globalSigma;
   }
 
   document.body.appendChild(blitter.canvas);
@@ -397,7 +357,7 @@ const sketch = async (props) => {
     } = opts;
 
     const learned = unflatten(solution);
-    const { nodes, net } = learned;
+    const { nodes } = learned;
 
     if (clear) {
       context.clearRect(0, 0, width, height);
@@ -469,71 +429,21 @@ const sketch = async (props) => {
     tmpContext.putImageData(imageData, 0, 0);
     context.drawImage(tmpCanvas, 0, 0, width, height);
 
-    const vertexCount = fitness ? 100 : 1024;
-    const angleLength = Math.PI * 2;
-    const vertices = [];
-    for (let i = 0; i < vertexCount; i++) {
-      const t = i / vertexCount;
-      const angleStart = 0;
-      let angle = angleStart + t * angleLength;
-
-      if (!fitness && exporting) angle += Random.gaussian(0, 0.02);
-
-      let u = Math.cos(angle);
-      let v = Math.sin(angle);
-
-      const amp = 0.0;
-      const freq = 10;
-      u = u + (amp != 0 ? Random.noise2D(u, v, freq, 0.05) * amp : 0);
-      v = v + (amp != 0 ? Random.noise2D(u, v, freq, 0.05) * amp : 0);
-
-      let idx = 0;
-      tmpInput[idx++] = u;
-      tmpInput[idx++] = v;
-      tmpInput.set(gaussianInputs, idx);
-
-      tempFloat3.set(net);
-      tmpNet.fromFlat(tempFloat3);
-      tmpNet.forward(tmpInput, tmpOutput);
-      const tanhScale = 0.5;
-      tmpOutput[0] = Math.tanh(tanhScale * tmpOutput[0]);
-      tmpOutput[1] = Math.tanh(tanhScale * tmpOutput[1]);
-      const scl = 1.2;
-      const outU = tmpOutput[0] * scl;
-      const outV = tmpOutput[1] * scl;
-      let x = width / 2 + (outU * (width - padding * 2)) / 2;
-      let y = height / 2 + (outV * (height - padding * 2)) / 2;
-
-      vertices.push([x, y]);
+    if (!fitness && !exporting) {
+      for (let node of sites) {
+        const color = Color.serialize(node.color, Color.OKLab, Color.sRGB);
+        context.fillStyle = color;
+        context.beginPath();
+        const px = node.position[0] * width;
+        const py = node.position[1] * height;
+        const rad = 0.015 * width;
+        context.arc(px, py, rad, 0, Math.PI * 2);
+        context.fill();
+        context.lineWidth = width * 0.0035;
+        context.strokeStyle = "white";
+        context.stroke();
+      }
     }
-
-    const closed = angleLength >= Math.PI * 2;
-    context.beginPath();
-    for (let [x, y] of vertices) {
-      context.lineTo(x, y);
-    }
-    if (closed) context.closePath();
-
-    context.lineWidth = lineWidth;
-    context.lineJoin = lineJoin;
-    context.lineCap = lineCap;
-    context.stroke();
-
-    // if (!fitness && !exporting) {
-    //   for (let node of sites) {
-    //     const color = Color.serialize(node.color, Color.OKLab, Color.sRGB);
-    //     context.fillStyle = color;
-    //     context.beginPath();
-    //     const px = node.position[0] * width;
-    //     const py = node.position[1] * height;
-    //     const rad = 0.015 * width;
-    //     context.arc(px, py, rad, 0, Math.PI * 2);
-    //     context.fill();
-    //     context.lineWidth = width * 0.0035;
-    //     context.strokeStyle = "white";
-    //     context.stroke();
-    //   }
-    // }
   }
 
   function activateHue(angle) {
@@ -603,7 +513,6 @@ const sketch = async (props) => {
         }
       }
     }
-    out.set(data.net, idx);
     return out;
   }
 
@@ -628,7 +537,6 @@ const sketch = async (props) => {
       }
       data.nodes.push(node);
     }
-    data.net = new Float32Array(solution.slice(idx));
     return data;
   }
 
