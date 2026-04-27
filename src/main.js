@@ -1,22 +1,11 @@
 import canvasSketch from "canvas-sketch";
-import {
-  clamp,
-  inverseLerp,
-  lerp,
-  clamp01,
-  lerpFrames,
-  mod,
-  dampArray,
-  degToRad,
-} from "canvas-sketch-util/math";
+import { clamp, inverseLerp, clamp01 } from "canvas-sketch-util/math";
 import * as Color from "@texel/color";
 import * as Random from "canvas-sketch-util/random.js";
 import sNES from "./snes.js";
 import { createBlitter, createConnection } from "./connection.js";
 import { SirenNetwork } from "./siren.js";
-import { vec3 } from "gl-matrix";
 
-//614850
 let seed = "" || Random.getRandomSeed();
 Random.setSeed(seed);
 console.log("Seed:", Random.getSeed());
@@ -24,7 +13,6 @@ console.log("Seed:", Random.getSeed());
 const vocab = Random.pick(["a sailboat"]);
 console.log(vocab);
 
-// Sketch settings
 const settings = {
   suffix: [Random.getSeed(), vocab].join("-"),
   dimensions: [2048, 2048],
@@ -45,7 +33,7 @@ const sketch = async (props) => {
   const nodeCount = 3;
   const HIDDEN_LAYER_SIZE = 16;
   const HIDDEN_LAYER_COUNT = 2;
-  const NET_LEARNING_RATE = 0.005 * 1;
+  const NET_LEARNING_RATE = 0.005;
   const NET_SCALE = 30;
   const GAUSSIAN_INPUT_DIMENSION = 2;
 
@@ -58,27 +46,22 @@ const sketch = async (props) => {
   window.setPrompt = (prompt) => connection.sendPrompt(prompt);
 
   const background = "#fff";
-  const fitnessBackground = background;
   const blitter = createBlitter({
     size: TARGET_SIZE,
     background,
     draw: drawFitness,
   });
 
-  const tmpCanvas = document.createElement("canvas");
-  const tmpContext = tmpCanvas.getContext("2d", { willReadFrequently: true });
-
   const outputCount = 3;
   const inputCount = GAUSSIAN_INPUT_DIMENSION + 2;
 
-  const createNet = () => {
-    return SirenNetwork({
+  const createNet = () =>
+    SirenNetwork({
       inputs: inputCount,
       outputs: outputCount,
       scale: NET_SCALE,
       hiddenLayers: Array(HIDDEN_LAYER_COUNT).fill(HIDDEN_LAYER_SIZE),
     });
-  };
 
   const tmpNet = createNet();
   const netLength = tmpNet.toFlat().length;
@@ -89,17 +72,16 @@ const sketch = async (props) => {
     {
       type: "oklab",
       dimensions: 3,
-      sigma: [colorSigma * 1, colorSigma * 1, colorSigma * 1],
+      sigma: [colorSigma, colorSigma, colorSigma],
       initScale: 0,
     },
-    // { type: "angleStart", dimensions: 1, sigma: 0.1, initScale: 1 },
     {
       type: "net",
       dimensions: netLength,
       sigma: NET_LEARNING_RATE,
       initData: () => createNet().toFlat(),
     },
-  ].filter(Boolean);
+  ];
 
   const paramsPerNode = nodeParams.reduce((sum, a) => sum + a.dimensions, 0);
   const solutionLength = nodeCount * paramsPerNode;
@@ -195,37 +177,10 @@ const sketch = async (props) => {
 
   return { render };
 
-  function extractColor(node, { outputOKLab } = {}) {
-    let style = "black";
-    let curOK;
-    if (node.oklab || node.srgb) {
-      let mappedColorRGB;
-      if (node.oklab) {
-        const learned = Color.OKLab;
-        const inOKLab = activate(node.oklab, learned);
-        Color.convert(inOKLab, learned, Color.OKLab, inOKLab);
-        let avgOKLab = inOKLab;
-        if (node.srgb) {
-          const inRGBToOKLab = Color.convert(
-            activate(node.srgb, Color.sRGB),
-            Color.sRGB,
-            Color.OKLab,
-          );
-          const mix = clamp01(sigmoid(node.colorMix[0]));
-          avgOKLab = vec3.lerp([], inOKLab, inRGBToOKLab, mix);
-        }
-        mappedColorRGB = gamutMapFromLearned(avgOKLab, Color.OKLab, Color.sRGB);
-      } else {
-        mappedColorRGB = activate(node.srgb, Color.sRGB);
-      }
-      curOK = Color.convert(mappedColorRGB, Color.sRGB, Color.OKLab);
-      style = Color.serialize(mappedColorRGB, Color.sRGB);
-    }
-    if (outputOKLab) {
-      if (curOK) return curOK.slice();
-      else return [0, 0, 0];
-    }
-    return style;
+  function extractColor(node) {
+    const inOKLab = activate(node.oklab);
+    const mappedRGB = gamutMapFromLearned(inOKLab);
+    return Color.serialize(mappedRGB, Color.sRGB);
   }
 
   function drawSolution(opts = {}) {
@@ -237,9 +192,6 @@ const sketch = async (props) => {
       width,
       height,
       exporting,
-      // context: outContext,
-      // width: outWidth,
-      // height: outHeight,
       solution,
     } = opts;
 
@@ -252,127 +204,71 @@ const sketch = async (props) => {
       context.fillRect(0, 0, width, height);
     }
 
-    context.fillStyle = "black";
+    context.lineWidth = 0.01 * width * (fitness ? 2 : 1);
+    context.lineJoin = "round";
+    context.lineCap = "round";
     context.strokeStyle = "black";
-
-    const lineWidthScale = fitness ? 2 : 1;
-    const lineWidth = 0.01 * width * lineWidthScale;
-    const lineJoin = "round";
-    const lineCap = "round";
-    context.lineWidth = lineWidth;
-    context.lineJoin = lineJoin;
-    context.lineCap = lineCap;
 
     const dim = Math.min(width, height);
     const padding = 0.1 * dim;
 
-    // const useMixbox = false;
-    // const outputOKLab = !useMixbox;
-    const outputOKLab = false;
-
     for (let node of nodes) {
-      const color = extractColor(node);
-      context.fillStyle = color;
+      context.fillStyle = extractColor(node);
       const vertexCount = fitness ? 100 : 1024;
-      const angleLength = Math.PI * 2;
-      const vertices = [];
+
+      tempFloat3.set(node.net);
+      tmpNet.fromFlat(tempFloat3);
+
+      context.beginPath();
       for (let i = 0; i < vertexCount; i++) {
         const t = i / vertexCount;
-        const angleStart = node.angleStart ? node.angleStart[0] : 0;
-        let angle = angleStart + t * angleLength;
-
+        let angle = t * Math.PI * 2;
         if (!fitness && exporting) angle += Random.gaussian(0, 0.02);
 
-        let u = Math.cos(angle);
-        let v = Math.sin(angle);
-
-        const amp = 0.0;
-        const freq = 10;
-        u = u + (amp != 0 ? Random.noise2D(u, v, freq, 0.05) * amp : 0);
-        v = v + (amp != 0 ? Random.noise2D(u, v, freq, 0.05) * amp : 0);
-
         let idx = 0;
-        tmpInput[idx++] = u;
-        tmpInput[idx++] = v;
+        tmpInput[idx++] = Math.cos(angle);
+        tmpInput[idx++] = Math.sin(angle);
         tmpInput.set(gaussianInputs, idx);
 
-        tempFloat3.set(node.net);
-        tmpNet.fromFlat(tempFloat3);
         tmpNet.forward(tmpInput, tmpOutput);
+
         const tanhScale = 0.5;
-        tmpOutput[0] = Math.tanh(tanhScale * tmpOutput[0]);
-        tmpOutput[1] = Math.tanh(tanhScale * tmpOutput[1]);
         const scl = 1.2;
-        const outU = tmpOutput[0] * scl;
-        const outV = tmpOutput[1] * scl;
-        let x = width / 2 + (outU * (width - padding * 2)) / 2;
-        let y = height / 2 + (outV * (height - padding * 2)) / 2;
-
-        vertices.push([x, y]);
-      }
-
-      const closed = angleLength >= Math.PI * 2;
-      context.beginPath();
-      for (let [x, y] of vertices) {
+        const outU = Math.tanh(tanhScale * tmpOutput[0]) * scl;
+        const outV = Math.tanh(tanhScale * tmpOutput[1]) * scl;
+        const x = width / 2 + (outU * (width - padding * 2)) / 2;
+        const y = height / 2 + (outV * (height - padding * 2)) / 2;
         context.lineTo(x, y);
       }
-      if (closed) context.closePath();
+      context.closePath();
       context.stroke();
     }
   }
 
-  function activateHue(angle) {
-    // reduce the angle
-    angle = angle % 360;
-
-    // force it to be the positive remainder, so that 0 <= angle < 360
-    angle = (angle + 360) % 360;
-
-    return angle;
-  }
-
-  function gamutMapFromLearned(
-    input,
-    learnedColorSpace = Color.OKLab,
-    outputSpace = outputGamut.space,
-  ) {
+  function gamutMapFromLearned(input) {
     return Color.gamutMapOKLCH(
-      Color.convert(input, learnedColorSpace, Color.OKLCH),
+      Color.convert(input, Color.OKLab, Color.OKLCH),
       outputGamut,
-      outputSpace,
+      outputGamut.space,
       undefined,
       Color.MapToAdaptiveCuspL,
     );
   }
 
-  function activate(color, learnedColorSpace = Color.OKLab) {
-    let [x, y, z] = color;
+  function activate(color) {
     const abScale = 0.4;
-    if (learnedColorSpace == Color.sRGB) {
-      return color.map((n) => clamp01(sigmoid(n)));
-    } else if (learnedColorSpace == Color.OKLab) {
-      return [
-        clamp01(sigmoid(color[0])),
-        clamp(Math.tanh(color[1]) * abScale, -abScale, abScale),
-        clamp(Math.tanh(color[2]) * abScale, -abScale, abScale),
-      ];
-    } else if (learnedColorSpace == Color.OKHSL) {
-      return [activateHue(color[0]), sigmoid(color[1]), sigmoid(color[2])];
-    } else if (learnedColorSpace == Color.OKLCH) {
-      return [
-        sigmoid(color[0]),
-        sigmoid(color[1]) * abScale,
-        activateHue(color[2]),
-      ];
-    }
-    return [x, y, z];
+    return [
+      clamp01(sigmoid(color[0])),
+      clamp(Math.tanh(color[1]) * abScale, -abScale, abScale),
+      clamp(Math.tanh(color[2]) * abScale, -abScale, abScale),
+    ];
   }
 
   function drawFitness(opts) {
     drawSolution({
       ...opts,
       exporting: false,
-      background: fitnessBackground,
+      background,
       fitness: true,
     });
   }
@@ -383,8 +279,7 @@ const sketch = async (props) => {
     for (let obj of data.nodes) {
       for (let { type, dimensions } of nodeParams) {
         for (let c = 0; c < dimensions; c++) {
-          const v = obj[type][c];
-          out[idx++] = v;
+          out[idx++] = obj[type][c];
         }
       }
     }
@@ -392,9 +287,7 @@ const sketch = async (props) => {
   }
 
   function unflatten(solution, opts = {}) {
-    const data = {
-      nodes: [],
-    };
+    const data = { nodes: [] };
     let idx = 0;
     for (let i = 0; i < nodeCount; i++) {
       const node = {};
@@ -416,10 +309,7 @@ const sketch = async (props) => {
   }
 
   async function updateLoop() {
-    const { bestFitness } = await blitter.tick({
-      connection,
-      optimizer,
-    });
+    const { bestFitness } = await blitter.tick({ connection, optimizer });
     epochs++;
     console.log(
       `Epoch ${epochs} / ${TOTAL_EPOCHS} - ${bestFitness.toFixed(4)}`,
@@ -438,54 +328,8 @@ const sketch = async (props) => {
 
 canvasSketch(sketch, settings);
 
-export function vectorToKey(vector, precision = 4) {
-  return vector.map((v) => round(v, precision)).join(",");
-}
-
-export function round(value, decimals) {
-  return Number(Math.round(value + "e" + decimals) + "e-" + decimals);
-}
-
-export function drawGraph({ positions, edges, context, color = "black" } = {}) {
-  context.beginPath();
-  for (let edge of edges) {
-    const [start, end] = edge.map((i) => positions[i]);
-    context.moveTo(start[0], start[1]);
-    context.lineTo(end[0], end[1]);
-  }
-  context.strokeStyle = color;
-  context.stroke();
-}
-
 function sigmoid(x) {
   return 1 / (1 + Math.exp(-x));
-}
-
-function drawOffsetPath(context, offsetPathResult, closed = false) {
-  context.beginPath();
-  if (closed) {
-    offsetPathResult.edges.forEach((edge, i) => {
-      const rev = i > 0;
-      if (rev) {
-        edge = edge.slice();
-        edge.reverse();
-      }
-      for (let j = 0; j < edge.length; j++) {
-        const p = edge[j];
-        if (j === 0) context.moveTo(p[0], p[1]);
-        else context.lineTo(p[0], p[1]);
-      }
-      context.closePath();
-    });
-  } else {
-    const vertices = offsetPathResult.vertices;
-    for (let i = 0; i < vertices.length; i++) {
-      const point = vertices[i];
-      context.lineTo(point[0], point[1]);
-    }
-    context.closePath();
-  }
-  context.fill();
 }
 
 function ema(series, alpha = 0.2) {
@@ -501,24 +345,7 @@ function ema(series, alpha = 0.2) {
 function drawPlot(context, plot, bounds, width, height) {
   for (let i = 0; i < plot.length; i++) {
     const t = plot.length <= 1 ? 0 : i / (plot.length - 1);
-    const f = plot[i];
-    const v = clamp01(inverseLerp(bounds[0], bounds[1], f));
+    const v = clamp01(inverseLerp(bounds[0], bounds[1], plot[i]));
     context.lineTo(t * width, (1 - v) * height);
   }
-}
-
-function softmax(logits, temperature = 1) {
-  const t = Math.max(1e-6, temperature);
-  let max = -Infinity;
-  for (let i = 0; i < logits.length; i++) max = Math.max(max, logits[i] / t);
-
-  const exps = new Array(logits.length);
-  let sum = 0;
-  for (let i = 0; i < logits.length; i++) {
-    const e = Math.exp(logits[i] / t - max);
-    exps[i] = e;
-    sum += e;
-  }
-  for (let i = 0; i < exps.length; i++) exps[i] /= sum;
-  return exps;
 }
